@@ -50,7 +50,7 @@ void stoptimer(int calling_entity);
 #define ESTIMATED_RTT 20
 
 struct pkt A_packet, B_packet;
-u_int32_t A_seqnum, B_seqnum, A_acknum, B_acknum;
+u_int32_t A_seqnum, B_seqnum, A_acknum, B_acknum, A_packets_tx, B_packets_tx;
 u_int8_t Awnd, Acurr_wnd, Bwnd, Bcurr_wnd;
 
 void A_output(message)
@@ -83,14 +83,46 @@ void B_output(message)  /* need be completed only for extra credit */
 void A_input(packet)
   struct pkt packet;
 {
-  if(packet.acknum == -1){
-    tolayer3(0, A_packet);
+  int validate_chksum;
+  if(packet.seqnum == -1){
+    validate_chksum = packet.acknum;
+    if(validate_chksum != packet.checksum)
+    if((validate_chksum != packet.checksum) || (packet.acknum == -1)){
+      tolayer3(0, A_packet);
+      stoptimer(0);
+      starttimer(0,ESTIMATED_RTT);
+      return;
+    }
+    Acurr_wnd--;
     stoptimer(0);
-    starttimer(0,ESTIMATED_RTT);
-    return;
+    A_packets_tx++;
   }
-  Acurr_wnd--;
-  stoptimer(0);
+  else{
+    struct msg message;
+    struct pkt ack_pkt;
+
+    validate_chksum = packet.seqnum + packet.acknum;
+    for(int i = 0; i < 20; i++){
+      validate_chksum += packet.payload[i];
+    }
+
+    ack_pkt.seqnum = -1;
+    if(validate_chksum != packet.checksum){
+      ack_pkt.acknum = -1;
+      ack_pkt.checksum = ack_pkt.acknum;
+      tolayer3(1, ack_pkt);
+      return;
+    }
+
+    ack_pkt.acknum = (packet.seqnum + 1) & 1 ;
+    ack_pkt.checksum = ack_pkt.acknum;
+    for(int i=0; i< 20; i++){
+      message.data[i] = packet.payload[i];
+    }
+    tolayer3(0, ack_pkt);
+    tolayer5(0, message.data);
+  }
+  return;
 }
 
 /* called when A's timer goes off */
@@ -108,6 +140,7 @@ void A_init()
   A_acknum = 0;
   Awnd = 1;
   Acurr_wnd = 0;
+  A_packets_tx = 0;
 }
 
 
@@ -117,29 +150,45 @@ void A_init()
 void B_input(packet)
   struct pkt packet;
 {
-  struct msg message;
-  struct pkt ack_pkt;
   int validate_chksum;
-
-  validate_chksum = packet.seqnum + packet.acknum;
-  for(int i = 0; i < 20; i++){
-    validate_chksum += packet.payload[i];
+  if(packet.seqnum == -1){
+    validate_chksum = packet.acknum;
+    if(validate_chksum != packet.checksum)
+    if((validate_chksum != packet.checksum) || (packet.acknum == -1)){
+      tolayer3(1, B_packet);
+      stoptimer(1);
+      starttimer(1,ESTIMATED_RTT);
+      return;
+    }
+    Bcurr_wnd--;
+    stoptimer(1);
+    B_packets_tx++;
   }
+  else{
+    struct msg message;
+    struct pkt ack_pkt;
 
-  ack_pkt.seqnum = -1;
-  if(validate_chksum != packet.checksum){
-    ack_pkt.acknum = -1;
+    validate_chksum = packet.seqnum + packet.acknum;
+    for(int i = 0; i < 20; i++){
+      validate_chksum += packet.payload[i];
+    }
+
+    ack_pkt.seqnum = -1;
+    if(validate_chksum != packet.checksum){
+      ack_pkt.acknum = -1;
+      ack_pkt.checksum = ack_pkt.acknum;
+      tolayer3(1, ack_pkt);
+      return;
+    }
+
+    ack_pkt.acknum = (packet.seqnum + 1) & 1 ;
+    ack_pkt.checksum = ack_pkt.acknum;
+    for(int i=0; i< 20; i++){
+      message.data[i] = packet.payload[i];
+    }
     tolayer3(1, ack_pkt);
-    return;
+    tolayer5(1, message.data);
   }
-
-  ack_pkt.checksum = 0;
-  ack_pkt.acknum = (packet.seqnum + 1) & 1 ;
-  for(int i=0; i< 20; i++){
-    message.data[i] = packet.payload[i];
-  }
-  tolayer3(1, ack_pkt);
-  tolayer5(1, message.data);
 }
 
 /* called when B's timer goes off */
@@ -155,6 +204,7 @@ void B_init()
   B_acknum = 0;
   Bcurr_wnd = 0;
   Bwnd = 0;
+  B_packets_tx = 0;
 }
 
 
@@ -285,10 +335,16 @@ int main()
              }
         free(eventptr);
         }
+   if(nsimmax != A_packets_tx){
+     printf("ERR: only %d packets were acknowledged out of %d packets sent\n", A_packets_tx, nsimmax);
+   }
    return 0;
 
 terminate:
    printf(" Simulator terminated at time %f\n after sending %d msgs from layer5\n",time,nsim);
+   if(nsimmax != A_packets_tx){
+     printf("ERR: only %d packets were acknowledged out of %d packets sent\n", A_packets_tx, nsimmax);
+   }
    return 0;
 }
 
