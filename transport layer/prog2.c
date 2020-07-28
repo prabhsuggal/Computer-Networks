@@ -35,6 +35,10 @@ struct pkt {
    char payload[20];
     };
 
+void tolayer3(int calling_entity, struct pkt packet);
+void tolayer5(int calling_entity, char msg[]);
+void starttimer(int calling_entity, float increment);
+void stoptimer(int calling_entity);
 /********* STUDENTS WRITE THE NEXT SEVEN ROUTINES *********/
 
 /* Here I define some function prototypes to avoid warnings */
@@ -42,9 +46,30 @@ struct pkt {
 /* changed the implementation to match */
 
 /* called from layer 5, passed the data to be sent to other side */
+
+#define ESTIMATED_RTT 20
+
+struct pkt A_packet, B_packet;
+u_int32_t A_seqnum, B_seqnum, A_acknum, B_acknum;
+u_int8_t Awnd, Acurr_wnd, Bwnd, Bcurr_wnd;
+
 void A_output(message)
   struct msg message;
 {
+  if(Acurr_wnd == Awnd){
+    return;
+  }
+
+  A_packet.seqnum = (A_seqnum++)&1;
+  A_packet.acknum = A_acknum;
+  A_packet.checksum = A_packet.seqnum + A_packet.acknum;
+  for(int i = 0; i < 20; i++){
+    A_packet.payload[i] = message.data[i];
+    A_packet.checksum += A_packet.payload[i];
+  }
+  Acurr_wnd++;
+  tolayer3(0, A_packet);
+  starttimer(0, ESTIMATED_RTT);
 
 }
 
@@ -58,19 +83,31 @@ void B_output(message)  /* need be completed only for extra credit */
 void A_input(packet)
   struct pkt packet;
 {
-
+  if(packet.acknum == -1){
+    tolayer3(0, A_packet);
+    stoptimer(0);
+    starttimer(0,ESTIMATED_RTT);
+    return;
+  }
+  Acurr_wnd--;
+  stoptimer(0);
 }
 
 /* called when A's timer goes off */
 void A_timerinterrupt()
 {
-
+  tolayer3(0, A_packet);
+  starttimer(0, ESTIMATED_RTT);
 }
 
 /* the following routine will be called once (only) before any other */
 /* entity A routines are called. You can use it to do any initialization */
 void A_init()
 {
+  A_seqnum = 0;
+  A_acknum = 0;
+  Awnd = 1;
+  Acurr_wnd = 0;
 }
 
 
@@ -80,6 +117,29 @@ void A_init()
 void B_input(packet)
   struct pkt packet;
 {
+  struct msg message;
+  struct pkt ack_pkt;
+  int validate_chksum;
+
+  validate_chksum = packet.seqnum + packet.acknum;
+  for(int i = 0; i < 20; i++){
+    validate_chksum += packet.payload[i];
+  }
+
+  ack_pkt.seqnum = -1;
+  if(validate_chksum != packet.checksum){
+    ack_pkt.acknum = -1;
+    tolayer3(1, ack_pkt);
+    return;
+  }
+
+  ack_pkt.checksum = 0;
+  ack_pkt.acknum = (packet.seqnum + 1) & 1 ;
+  for(int i=0; i< 20; i++){
+    message.data[i] = packet.payload[i];
+  }
+  tolayer3(1, ack_pkt);
+  tolayer5(1, message.data);
 }
 
 /* called when B's timer goes off */
@@ -91,6 +151,10 @@ void B_timerinterrupt()
 /* entity B routines are called. You can use it to do any initialization */
 void B_init()
 {
+  B_seqnum = 0;
+  B_acknum = 0;
+  Bcurr_wnd = 0;
+  Bwnd = 0;
 }
 
 
